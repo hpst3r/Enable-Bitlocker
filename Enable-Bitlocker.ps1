@@ -57,6 +57,8 @@ param (
   [Parameter()]
   [bool]$EncryptSpinningDrives = $false,
   [Parameter()]
+  [bool]$CheckFilesystem = $true,
+  [Parameter()]
   [bool]$LogToFile = $false,
   [Parameter()]
   [string]$LogFilePath = (Join-Path -Path $env:TEMP -ChildPath "bitlocker-$(Get-Date -UFormat %s)")
@@ -335,6 +337,9 @@ BEGIN {
 
             $Salvage = (& winmgmt /salvagerepository)
 
+            Write-Host -Object `
+              "Salvage result: $($Salvage)"
+
           } else {
 
             throw `
@@ -373,7 +378,41 @@ BEGIN {
           
         continue Partition
 
-      }    
+      }
+    }
+
+    # encrypt only NTFS or ReFS partitions, skip others.
+    if ($CheckFilesystem) {
+
+      $Volume = Get-Volume `
+        -DriveLetter $Partition.DriveLetter `
+        -ErrorAction 'Stop'
+      
+      # Check if the partition is formatted with NTFS or ReFS.
+      # If not, skip this partition.
+      if ($Volume.FileSystemType -notin @("NTFS", "ReFS")) {
+
+        Write-Host -Object `
+          "Info: Volume $($Partition.DriveLetter) is not formatted with NTFS or ReFS. Skipping this partition."
+
+        continue Partition
+
+      }
+
+      Write-Host -Object `
+        "Info: Volume $($Partition.DriveLetter) is formatted with $($Volume.FileSystemType). Continuing."
+    }
+
+    # Ventoy is a utility typically used for booting multiple ISO files from a USB drive.
+    # Without this, your multi boot drives will be Bitlocker To Go encrypted, which is annoying.
+    $IsVentoy = $Partition.FriendlyName -like "Ventoy*"
+    if ($IsVentoy) {
+
+      Write-Host -Object `
+        "Info: Partition $($Partition.DriveLetter) is a Ventoy partition. Skipping this partition."
+
+      continue Partition
+
     }
 
     # get the BitLocker volume object that corresponds to our mount point.
@@ -558,6 +597,11 @@ BEGIN {
 
         }
       }
+
+      # cleanly handle error where domain cannot be contacted and Group Policy is set to automatically back up BitLocker keys to AD, so encryption fails (we'll have to retry later).
+      [string] $DomainContactException = 'The specified domain either does not exist or could not be contacted. (Exception from HRESULT: 0x8007054B)'
+
+      if ($Result -contains $DomainContactException) {}
       
       Add-BitLockerKeyProtector `
         -MountPoint $BitLockerVolume.MountPoint `
