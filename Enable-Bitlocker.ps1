@@ -222,6 +222,36 @@ BEGIN {
 
     return 1
   }
+
+  # determine whether the system is domain joined or not, and whether the domain is reachable.
+
+  $ComputerSystem = Get-CimInstance -ClassName Win32_ComputerSystem
+
+  if ($ComputerSystem.PartOfDomain) {
+
+    # [DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest() connects to a DC for forest info so can be used as connection test
+
+    try {
+      $Domain = ([DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest()).Domains.Name
+    } catch {
+      $Domain = $null
+    }
+
+    if (-not [bool]$Domain) {
+
+      Write-Error `
+        "This system's domain is not reachable. I won't encrypt the system's disks. Please ensure that the domain is reachable and try again. Exiting."
+
+      return 1
+
+    }
+
+  }
+
+  $ComputerSystem = Get-WmiObject -Class Win32_ComputerSystem
+  if ($ComputerSystem.PartOfDomain) {
+    Write-Output "Domain-joined to $($ComputerSystem.Domain)"
+  }
   
   # Get a list of partitions with associated drive letters - we can enable BitLocker on these.
   # Iterate through the partitions and determine that we do want to encrypt them.
